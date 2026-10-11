@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Document Vault</title>
+<style>
+  :root{--bg:#0f1115;--card:#181b22;--text:#e8eaf0;--muted:#9aa1b2;--accent:#5b8cff;--err:#ff6b6b;--line:#2a2f3a}
+  @media (prefers-color-scheme: light){:root{--bg:#f3f5f9;--card:#ffffff;--text:#1a1d24;--muted:#5d6475;--accent:#2f62e0;--err:#d33a3a;--line:#dde1ea}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+  .card{width:100%;max-width:420px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:32px 28px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 24px}
+  .steps{display:flex;gap:6px;margin-bottom:24px}
+  .steps span{flex:1;height:4px;border-radius:2px;background:var(--line);transition:background .3s}
+  .steps span.on{background:var(--accent)}
+  label{display:block;font-weight:600;margin-bottom:8px}
+  input{width:100%;padding:12px 14px;font-size:16px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);letter-spacing:1px;outline:none}
+  input:focus{border-color:var(--accent)}
+  .hint{color:var(--muted);font-size:13px;margin:8px 0 20px}
+  .hint b{color:var(--text);font-weight:600}
+  button{width:100%;padding:12px;font-size:15px;font-weight:600;border:none;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  .back{background:none;color:var(--muted);margin-top:8px;font-weight:500}
+  .msg{min-height:20px;font-size:14px;margin-top:14px;text-align:center}
+  .msg.err{color:var(--err)}
+  .icon{font-size:28px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🔒</div>
+  <h1>Document Vault</h1>
+  <p class="sub">Insurance and important documents</p>
+  <div class="steps"><span id="s0"></span><span id="s1"></span><span id="s2"></span></div>
+
+  <form id="f" autocomplete="off">
+    <label id="lbl" for="inp"></label>
+    <input id="inp" type="password" spellcheck="false" autocapitalize="characters" required>
+    <p class="hint" id="hint"></p>
+    <button id="go" type="submit">Next</button>
+    <button id="back" class="back" type="button">Back</button>
+  </form>
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+// The Drive link is encrypted (AES GCM). The key is derived (PBKDF2, SHA 256)
+// from all three ID numbers together. The ID numbers themselves are not stored here.
+const V = {
+  salt: "U6WWcT/2TAJOOQtuHHDQCw==",
+  iv:   "fBNt3p/zoenjLKmJ",
+  ct:   "YBwwGRss1KX2z+pMTuyqDEZEDBsmkqKBVI0Lvl4yYUO0KLh/nI9bosu6YvORFS4C1cLSxherE5UNDBPp/XLMecnTNPG5FiBYWApO7rA62v8Lf34byVdpyxj534fk5l5tkDn3yA==",
+  it:   600000
+};
+
+const STEPS = [
+  { label: "Enter Himanshu's PAN card number",
+    hint: "<b>Hint:</b> EE*******Q" },
+  { label: "Enter Himanshu's Aadhaar card number",
+    hint: "<b>Hint:</b> 65** **** ***9" },
+  { label: "Enter Himanshu's Voter ID card number",
+    hint: "<b>Hint:</b> TQ*******1" }
+];
+
+let step = 0;
+const answers = ["", "", ""];
+const $ = id => document.getElementById(id);
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const clean = s => s.replace(/[\s\-]/g, "").toUpperCase();
+
+function render(){
+  const s = STEPS[step];
+  $("lbl").textContent = s.label;
+  $("hint").innerHTML = s.hint;
+  $("inp").value = answers[step];
+  $("go").textContent = step < 2 ? "Next" : "Unlock";
+  $("back").style.display = step ? "block" : "none";
+  for (let i = 0; i < 3; i++) $("s" + i).className = i <= step ? "on" : "";
+  $("inp").focus();
+}
+
+async function unlock(){
+  const secret = new TextEncoder().encode(answers.join("|"));
+  const base = await crypto.subtle.importKey("raw", secret, "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: b64(V.salt), iterations: V.it, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(V.iv) }, key, b64(V.ct));
+  return new TextDecoder().decode(pt);
+}
+
+$("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("msg").textContent = ""; $("msg").className = "msg";
+  answers[step] = clean($("inp").value);
+  if (step < 2){ step++; render(); return; }
+
+  $("go").disabled = true; $("go").textContent = "Checking...";
+  try {
+    const url = await unlock();
+    $("msg").textContent = "Unlocked. Opening your Drive folder...";
+    window.location.href = url;
+  } catch {
+    answers.fill(""); step = 0; render();
+    $("msg").className = "msg err";
+    $("msg").textContent = "One or more numbers did not match. Please start again.";
+  } finally {
+    $("go").disabled = false;
+    if (step === 0) $("go").textContent = "Next";
+  }
+});
+
+$("back").addEventListener("click", () => { answers[step] = clean($("inp").value); step--; render(); });
+render();
+</script>
+</body>
+</html>
